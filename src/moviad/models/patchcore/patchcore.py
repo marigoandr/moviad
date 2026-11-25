@@ -20,6 +20,7 @@ from moviad.models.patchcore.anomaly_map import AnomalyMapGenerator
 from moviad.models.patchcore.kcenter_greedy import CoresetExtractor
 from moviad.models.training_args import TrainingArgs
 from moviad.utilities.custom_feature_extractor_trimmed import CustomFeatureExtractor
+from moviad.utilities.foreground import restrict_to_mask
 from moviad.utilities.get_sizes import params_to_mb, count_params
 
 class PatchCore(VADModel):
@@ -31,7 +32,9 @@ class PatchCore(VADModel):
         coreset_extractor: CoresetExtractor = None,
         num_neighbors: int = 9,
         apply_quantization: bool = False,
-        memory_bank_size: int = 10000
+        memory_bank_size: int = 10000,
+        coreset_ratio: float | None = None,
+        foreground_dilation: int = 2,
     ) -> None:
 
         """
@@ -42,6 +45,11 @@ class PatchCore(VADModel):
             input_size (tuple[int]): size of the input images
             feature_extractor (CustomFeatureExtractor): feature extractor to be used
             num_neighbors (int): number of neighbors to be considered in the k-nn search
+            memory_bank_size (int): patches kept in the memory bank
+            coreset_ratio (float | None): if set, the memory bank keeps this fraction of the training patches
+                instead of memory_bank_size (sampling_ratio of the default coreset extractor)
+            foreground_dilation (int): radius, in patches, of the dilation of the foreground masks that
+                forward() may get (see restrict_to_mask())
         """
 
         super().__init__()
@@ -53,6 +61,7 @@ class PatchCore(VADModel):
         self.feature_pooler = torch.nn.AvgPool2d(3,1,1)
         self.anomaly_map_generator = AnomalyMapGenerator()
         self.memory_bank_size = memory_bank_size
+        self.foreground_dilation = foreground_dilation
         self.memory_bank: Tensor
 
         self.apply_quantization = apply_quantization
@@ -61,7 +70,10 @@ class PatchCore(VADModel):
             from .product_quantizer import ProductQuantizer
             self.product_quantizer = ProductQuantizer()
 
-        if coreset_extractor is None:
+        if coreset_extractor is None and coreset_ratio is not None:
+            # Size set at fit time, from the number of training patches
+            self.coreset_extractor = CoresetExtractor(False, self.device, sampling_ratio=coreset_ratio, k=None)
+        elif coreset_extractor is None:
             self.coreset_extractor = CoresetExtractor(False, self.device, k=self.memory_bank_size)
         else:
             self.coreset_extractor = coreset_extractor
@@ -111,7 +123,7 @@ class PatchCore(VADModel):
 
         return embedding, batch_size, width, height
 
-    def forward(self, input_tensor: Tensor) -> Tensor | dict[str, Tensor]:
+    def forward(self, input_tensor: Tensor, foreground: Tensor | None = None) -> Tensor | dict[str, Tensor]:
         """Return Embedding during training, or a tuple of anomaly map and anomaly score during testing.
 
         Steps performed:
@@ -121,6 +133,9 @@ class PatchCore(VADModel):
 
         Args:
             input_tensor (Tensor): Input tensor
+            foreground (Tensor | None): (B, 1, H, W) bool masks of the object; in test mode, if given, the
+                patch scores outside them, dilated by foreground_dilation patches, are zeroed before the
+                anomaly score and map are computed. Ignored in training mode.
 
         Returns:
             Tensor | dict[str, Tensor]: Embedding for training,
@@ -143,7 +158,8 @@ class PatchCore(VADModel):
                 width=width,
                 height=height,
                 image_size=image_size,
-                memory_bank=self.memory_bank
+                memory_bank=self.memory_bank,
+                foreground=foreground,
             )
 
     def calculate_anomaly_maps_scores(
@@ -154,6 +170,7 @@ class PatchCore(VADModel):
         width: int,
         height: int,
         image_size: tuple,
+        foreground: Tensor | None = None,
     ) -> tuple[Tensor, Tensor]:
 
         if self.feature_extractor.quantized:
@@ -171,6 +188,9 @@ class PatchCore(VADModel):
         # reshape to batch dimension
         patch_scores = patch_scores.reshape((batch_size, -1))
         locations = locations.reshape((batch_size, -1))
+        if foreground is not None:
+            patch_scores = restrict_to_mask(patch_scores.reshape((batch_size, 1, width, height)), foreground,
+                                            self.foreground_dilation).reshape((batch_size, -1))
 
         # compute the anomaly score of the images
         pred_scores = self.compute_anomaly_score(patch_scores, locations, embedding, memory_bank)

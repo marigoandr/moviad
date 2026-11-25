@@ -18,7 +18,8 @@ class CoresetExtractor:
 
     Args:
         embedding (torch.Tensor): Embedding vector extracted from a CNN
-        sampling_ratio (float): Ratio to choose coreset size from the embedding size.
+        sampling_ratio (float): Ratio to choose coreset size from the embedding size, used when k is None.
+        k (int | None): coreset size.
 
     Example:
         >>> embedding.shape
@@ -32,10 +33,11 @@ class CoresetExtractor:
 
     PROJECTION_CHUNK = 65536  # vectors projected at a time: 384 MB of float32 input at 1536 dimensions
 
-    def __init__(self, quantized, device: torch.device, sampling_ratio: float = 0.1,k: int = 30000) -> None:
+    def __init__(self, quantized, device: torch.device, sampling_ratio: float = 0.1,k: int | None = 30000) -> None:
 
         self.quantized = quantized
         self.projector = SparseRandomProjection(n_components="auto", eps=0.90)
+        self.sampling_ratio = sampling_ratio
         self.k = k
         self.features: torch.Tensor
         self.min_distances: torch.Tensor = None
@@ -145,7 +147,8 @@ class CoresetExtractor:
         last_item = z_lib[select_idx:select_idx + 1]
         coreset_idx = [torch.tensor(select_idx)]
 
-        for _ in tqdm(range(self.k - 1)):  # k points in total: the first one, then k - 1 greedy picks
+        k = self.k if self.k is not None else max(1, round(self.sampling_ratio * num_vectors))
+        for _ in tqdm(range(k - 1)):  # k points in total: the first one, then k - 1 greedy picks
             distances = torch.linalg.norm(z_lib - last_item, dim=1, keepdims=True)  # broadcasting step
             # distances = torch.sum(torch.pow(z_lib-last_item, 2), dim=1, keepdims=True) # broadcasting step
             min_distances = torch.minimum(distances, min_distances)  # iterative step

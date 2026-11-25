@@ -130,3 +130,23 @@ def test_anomaly_map_does_not_depend_on_the_rest_of_the_batch():
     in_batch, _ = model(images)
     alone, _ = model(images[:1])
     assert torch.allclose(alone, in_batch[:1], atol=1e-5)
+
+
+def test_coreset_ratio_sets_the_memory_bank_size():
+    from torch.utils.data import DataLoader
+    from moviad.models.training_args import TrainingArgs
+
+    model = _patchcore(coreset_ratio=0.05)  # 7 images x 64 patches = 448 patches: 22 kept
+    model.train()
+    model.train_epoch(0, DataLoader(torch.rand(7, 3, 32, 32), batch_size=3), TrainingArgs(batch_size=3, epochs=1))
+    assert model.memory_bank.shape == (22, 16)
+
+
+def test_foreground_restricts_the_scores_and_the_maps():
+    model, _, _ = _fit_and_predict("cpu")
+    images = torch.rand(2, 3, 32, 32)
+    maps, scores = model(images)
+    full_maps, full_scores = model(images, foreground=torch.ones(2, 1, 32, 32, dtype=torch.bool))
+    assert torch.equal(full_maps, maps) and torch.equal(full_scores, scores)
+    empty_maps, empty_scores = model(images, foreground=torch.zeros(2, 1, 32, 32, dtype=torch.bool))
+    assert not empty_maps.any() and not empty_scores.any()

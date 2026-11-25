@@ -48,3 +48,12 @@ def test_unprojected_when_target_dimension_too_large():
     # 3000 vectors at eps 0.9 need 198 dimensions: 64-dimensional vectors are used as they are
     x = torch.from_numpy(np.random.default_rng(0).standard_normal((3000, 64), dtype=np.float32))
     _assert_greedy(x.numpy().astype(np.float64), _coreset(x, 30))
+
+
+def test_sampling_ratio_sets_the_size_when_k_is_none():
+    x = torch.from_numpy(np.random.default_rng(0).standard_normal((3000, 512), dtype=np.float32))
+    np.random.seed(0)
+    by_ratio = CoresetExtractor(False, torch.device("cpu"), sampling_ratio=0.01, k=None).get_coreset_idx_randomp(x)
+    np.random.seed(0)
+    by_size = CoresetExtractor(False, torch.device("cpu"), k=30).get_coreset_idx_randomp(x)
+    assert torch.equal(by_ratio, by_size)  # 1% of 3000 vectors
