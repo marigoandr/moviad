@@ -12,10 +12,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 #from memory_profiler import profile
-from torch import Tensor, autocast, nn
+from torch import Tensor, nn
 from tqdm import tqdm
 
-from .product_quantizer import ProductQuantizer
 from moviad.models.vad_model import VADModel
 from moviad.models.patchcore.anomaly_map import AnomalyMapGenerator
 from moviad.models.patchcore.kcenter_greedy import CoresetExtractor
@@ -58,6 +57,8 @@ class PatchCore(VADModel):
 
         self.apply_quantization = apply_quantization
         if apply_quantization:
+            # Imported only here and in load(): it needs faiss, which PatchCore without quantization does not
+            from .product_quantizer import ProductQuantizer
             self.product_quantizer = ProductQuantizer()
 
         if coreset_extractor is None:
@@ -65,18 +66,21 @@ class PatchCore(VADModel):
         else:
             self.coreset_extractor = coreset_extractor
 
-    def to(self, device: torch.device):
-        super().to(device)
-        self.feature_extractor.to(device)
+    def to(self, device: torch.device) -> PatchCore:
+        # The device is updated first: the memory bank and the coreset extractor follow it
+        self.device = torch.device(device)
+        super().to(self.device)
+        self.feature_extractor.to(self.device)
+        self.coreset_extractor.device = self.device
 
-        if hasattr(self, "memory_bank"):
+        if getattr(self, "memory_bank", None) is not None:
             if type(self.memory_bank) is dict:
                 for k,v in self.memory_bank.items():
                     self.memory_bank[k] = v.to(self.device)
             else:
                 self.memory_bank = self.memory_bank.to(self.device)
 
-        self.device = device
+        return self
 
     def extract_embedding(self, batch:torch.Tensor):
         with torch.no_grad():
@@ -179,25 +183,40 @@ class PatchCore(VADModel):
 
         return anomaly_maps, pred_scores
 
+    def collect_embeddings(self, train_dataloader) -> Tensor:
+        """Patch embeddings of every image of the loader, (num_patches, emb_dim), on the CPU.
+
+        In float32, as at test time: with autocast the memory bank would come from features of another
+        precision than the test ones (bfloat16 on the CPU, which then fails against the float32 test ones).
+        On the CPU because with a large training set they do not fit on a GPU; allocated once at full size
+        and filled batch by batch, because a list of batches joined by torch.cat needs twice their memory.
+        """
+        embeddings, filled = None, 0
+        with torch.no_grad():
+            print("Embedding Extraction:")
+            for batch in tqdm(iter(train_dataloader)):
+                embedding = self(batch.to(self.device))
+                if embeddings is None:  # patches per image and embedding size are known from the first batch
+                    # shortcut: float embeddings only (torch.empty has no quantized dtypes), the same as the
+                    # coreset extractor; a quantized feature extractor needs its own path here
+                    patches_per_image = len(embedding) // len(batch)
+                    embeddings = torch.empty(len(train_dataloader.dataset) * patches_per_image, embedding.shape[1],
+                                             dtype=embedding.dtype)
+                embeddings[filled:filled + len(embedding)] = embedding
+                filled += len(embedding)
+        # Fewer rows than allocated when the loader drops its last incomplete batch
+        return embeddings[:filled]
+
     def train_epoch(
         self, epoch, train_dataloader, training_args: TrainingArgs
     ):
-        embeddings = []
+        embeddings = self.collect_embeddings(train_dataloader)
 
         with torch.no_grad():
-
-            print("Embedding Extraction:")
-            for batch in tqdm(iter(train_dataloader)):
-                with autocast(device_type=self.device.type, enabled=True):
-                    embedding = self(batch.to(self.device))
-                    embeddings.append(embedding)
-
-            embeddings = torch.cat(embeddings, dim = 0)
-            torch.cuda.empty_cache()
-
             #apply coreset reduction
             print("Coreset Extraction:")
-            coreset = self.coreset_extractor.extract_coreset(embeddings)
+            # The coreset is taken from the embeddings on the CPU: back to the device of the model
+            coreset = self.coreset_extractor.extract_coreset(embeddings).to(self.device)
 
             if self.apply_quantization:
                 assert self.product_quantizer is not None, "Product Quantizer not initialized"
@@ -210,24 +229,15 @@ class PatchCore(VADModel):
     def train_chunk(
         self, train_dataloader, training_args: TrainingArgs
     ):
-        embeddings = []
+        embeddings = self.collect_embeddings(train_dataloader)
 
         with torch.no_grad():
-
-            print("Embedding Extraction:")
-            for batch in tqdm(iter(train_dataloader)):
-                with autocast(device_type=self.device.type, enabled=True):
-                    embedding = self(batch.to(self.device))
-                    embeddings.append(embedding)
-
-            embeddings = torch.cat(embeddings, dim = 0)
-            torch.cuda.empty_cache()
-
-            total_embbeddings = torch.cat([embeddings, self.memory_bank], dim=0) if hasattr(self, "memory_bank") else embeddings
+            memory_bank = getattr(self, "memory_bank", None)
+            total_embbeddings = torch.cat([embeddings, memory_bank.cpu()], dim=0) if memory_bank is not None else embeddings
 
             #apply coreset reduction
             print("Coreset Extraction:")
-            coreset = self.coreset_extractor.extract_coreset(total_embbeddings)
+            coreset = self.coreset_extractor.extract_coreset(total_embbeddings).to(self.device)
 
             if self.apply_quantization:
                 assert self.product_quantizer is not None, "Product Quantizer not initialized"
@@ -493,7 +503,7 @@ class PatchCore(VADModel):
         if self.apply_quantization:
             assert self.product_quantizer is not None
             self.product_quantizer.save(save_path + "/product_quantizer.bin")
-        torch.save(self.memory_bank, save_path)
+        torch.save({"memory_bank": self.memory_bank}, save_path)
 
     def load(self, model_state_dict_patch, quantizer_state_dict_path):
         """
@@ -507,6 +517,7 @@ class PatchCore(VADModel):
 
         self._load_model(model_state_dict_patch)
         if quantizer_state_dict_path is not None:
+            from .product_quantizer import ProductQuantizer
             self.product_quantizer = ProductQuantizer()
             self.product_quantizer.load(quantizer_state_dict_path)
             self.apply_quantization = True
@@ -520,7 +531,9 @@ class PatchCore(VADModel):
             path (str): where the pt file containing the memory bank is stored
         """
 
-        state_dict = torch.load(path)
+        state_dict = torch.load(path, map_location=self.device)
+        if isinstance(state_dict, Tensor):  # a memory bank saved as a bare tensor, as save() did before
+            state_dict = {"memory_bank": state_dict}
 
         ## TODO: MemoryBank quantization
 
