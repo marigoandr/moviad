@@ -111,7 +111,7 @@ class CoresetExtractor:
 
         print(f"   Fitting random projections. Start dim = {z_lib.shape}.")
         if self.quantized:
-            z_lib = torch.int_repr(z_lib).to(torch.float64).cpu()
+            z_lib = torch.int_repr(z_lib)
         num_vectors, dim = z_lib.shape
         projected_dim = johnson_lindenstrauss_min_dim(num_vectors, eps=eps)
         if 0 < projected_dim <= dim:
@@ -126,26 +126,20 @@ class CoresetExtractor:
             components = None
             print(f"   Not projected: eps={eps} gives {projected_dim} dimensions for {dim}-dimensional vectors. Please increase `eps`.")
 
-        # Projected vectors and their distances to the first one, the first coreset point, computed in float32
-        # chunk by chunk: neither the projected z_lib nor a float32 copy of it is ever built on the CPU
+        # Projected chunk by chunk on self.device, in float32: neither the projected z_lib nor a float32 copy
+        # of it is ever built on the CPU
         dtype = torch.float16 if float16 else torch.float32
-        projected = torch.empty(num_vectors, components.shape[1] if components is not None else dim,
+        projected = torch.empty(num_vectors, projected_dim if components is not None else dim,
                                 dtype=dtype, device=self.device)
-        min_distances = torch.empty(num_vectors, 1, dtype=dtype, device=self.device)
-        first = None
         for start in range(0, num_vectors, self.PROJECTION_CHUNK):
             chunk = z_lib[start:start + self.PROJECTION_CHUNK].to(self.device, torch.float32)
-            if components is not None:
-                chunk = chunk @ components
-            if first is None:
-                first = chunk[:1]
-            min_distances[start:start + len(chunk)] = torch.linalg.norm(chunk - first, dim=1, keepdim=True)
-            projected[start:start + len(chunk)] = chunk
+            projected[start:start + len(chunk)] = chunk @ components if components is not None else chunk
         z_lib = projected
 
         select_idx = 0
         last_item = z_lib[select_idx:select_idx + 1]
         coreset_idx = [torch.tensor(select_idx)]
+        min_distances = torch.linalg.norm(z_lib - last_item, dim=1, keepdims=True)
 
         k = self.k if self.k is not None else max(1, round(self.sampling_ratio * num_vectors))
         for _ in tqdm(range(k - 1)):  # k points in total: the first one, then k - 1 greedy picks
