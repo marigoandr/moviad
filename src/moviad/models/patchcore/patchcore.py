@@ -33,7 +33,6 @@ class PatchCore(VADModel):
         num_neighbors: int = 9,
         apply_quantization: bool = False,
         memory_bank_size: int = 10000,
-        coreset_ratio: float | None = None,
         foreground_dilation: int = 2,
     ) -> None:
 
@@ -45,9 +44,7 @@ class PatchCore(VADModel):
             input_size (tuple[int]): size of the input images
             feature_extractor (CustomFeatureExtractor): feature extractor to be used
             num_neighbors (int): number of neighbors to be considered in the k-nn search
-            memory_bank_size (int): patches kept in the memory bank
-            coreset_ratio (float | None): if set, the memory bank keeps this fraction of the training patches
-                instead of memory_bank_size (sampling_ratio of the default coreset extractor)
+            memory_bank_size (int): patches kept in the memory bank by the default coreset extractor
             foreground_dilation (int): radius, in patches, of the dilation of the foreground masks that
                 forward() may get (see restrict_to_mask())
         """
@@ -70,10 +67,7 @@ class PatchCore(VADModel):
             from .product_quantizer import ProductQuantizer
             self.product_quantizer = ProductQuantizer()
 
-        if coreset_extractor is None and coreset_ratio is not None:
-            # Size set at fit time, from the number of training patches
-            self.coreset_extractor = CoresetExtractor(False, self.device, sampling_ratio=coreset_ratio, k=None)
-        elif coreset_extractor is None:
+        if coreset_extractor is None:
             self.coreset_extractor = CoresetExtractor(False, self.device, k=self.memory_bank_size)
         else:
             self.coreset_extractor = coreset_extractor

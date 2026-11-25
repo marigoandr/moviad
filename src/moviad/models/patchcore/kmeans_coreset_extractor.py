@@ -9,6 +9,9 @@ from moviad.models.patchcore.kcenter_greedy import CoresetExtractor
 class MiniBatchKMeansCoresetExtractor(CoresetExtractor):
     def __init__(self, quantized, device: torch.device, sampling_ratio: float = 0.1,
                  k: int = 30000, batch_size: int = 16, n_init: int = 100) -> None:
+        if k is None:
+            # MiniBatchKMeans needs the number of clusters before it sees the embeddings, streamed in batches
+            raise ValueError("MiniBatchKMeansCoresetExtractor needs k: sampling_ratio alone is not supported")
         super().__init__(quantized, device, sampling_ratio, k)
         self.batch_size = batch_size
         self.n_init = 100
@@ -29,16 +32,12 @@ class MiniBatchKMeansCoresetExtractor(CoresetExtractor):
 
 class KMeansCoresetExtractor(CoresetExtractor):
 
-    def get_coreset_idx_randomp(self, z_lib, n: int = 1000, k: int = 30000, eps: float = 0.90, float16: bool = True,
-                                force_cpu: bool = False):
-        super().get_coreset_idx_randomp(z_lib, n, k, eps, float16, force_cpu)
-
     def __init__(self, quantized, device: torch.device, sampling_ratio: float = 0.1,
-                 k: int = 30000) -> None:
+                 k: int | None = 30000) -> None:
         super().__init__(quantized, device, sampling_ratio, k)
 
     def extract_coreset(self, embeddings: torch.Tensor) -> torch.Tensor:
-        kmeans_extractor = KMeans(n_clusters=self.k, random_state=42, verbose=1, n_init="auto")
+        kmeans_extractor = KMeans(n_clusters=self.coreset_size(len(embeddings)), random_state=42, verbose=1, n_init="auto")
         kmeans_extractor.fit(embeddings.cpu().numpy())
         coreset = kmeans_extractor.cluster_centers_
         return torch.tensor(coreset).to(self.device)

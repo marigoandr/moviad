@@ -132,11 +132,13 @@ def test_anomaly_map_does_not_depend_on_the_rest_of_the_batch():
     assert torch.allclose(alone, in_batch[:1], atol=1e-5)
 
 
-def test_coreset_ratio_sets_the_memory_bank_size():
+def test_coreset_extractor_with_a_sampling_ratio_sets_the_memory_bank_size():
     from torch.utils.data import DataLoader
+    from moviad.models.patchcore.kcenter_greedy import CoresetExtractor
     from moviad.models.training_args import TrainingArgs
 
-    model = _patchcore(coreset_ratio=0.05)  # 7 images x 64 patches = 448 patches: 22 kept
+    extractor = CoresetExtractor(False, torch.device("cpu"), sampling_ratio=0.05, k=None)
+    model = _patchcore(coreset_extractor=extractor)  # 7 images x 64 patches = 448 patches: 22 kept
     model.train()
     model.train_epoch(0, DataLoader(torch.rand(7, 3, 32, 32), batch_size=3), TrainingArgs(batch_size=3, epochs=1))
     assert model.memory_bank.shape == (22, 16)

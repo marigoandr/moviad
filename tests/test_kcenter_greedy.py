@@ -2,10 +2,12 @@
 fit_transform() of the same vectors, with the same numpy seed."""
 
 import numpy as np
+import pytest
 import torch
 from sklearn.random_projection import SparseRandomProjection
 
 from moviad.models.patchcore.kcenter_greedy import CoresetExtractor
+from moviad.models.patchcore.kmeans_coreset_extractor import KMeansCoresetExtractor, MiniBatchKMeansCoresetExtractor
 
 
 def _assert_greedy(x: np.ndarray, chosen: list[int]) -> None:
@@ -57,3 +59,14 @@ def test_sampling_ratio_sets_the_size_when_k_is_none():
     np.random.seed(0)
     by_size = CoresetExtractor(False, torch.device("cpu"), k=30).get_coreset_idx_randomp(x)
     assert torch.equal(by_ratio, by_size)  # 1% of 3000 vectors
+
+
+def test_kmeans_extractor_with_a_sampling_ratio():
+    x = torch.from_numpy(np.random.default_rng(0).standard_normal((500, 8), dtype=np.float32))
+    extractor = KMeansCoresetExtractor(False, torch.device("cpu"), sampling_ratio=0.02, k=None)
+    assert extractor.extract_coreset(x).shape == (10, 8)  # 2% of 500 vectors
+
+
+def test_minibatch_kmeans_extractor_needs_k():
+    with pytest.raises(ValueError):
+        MiniBatchKMeansCoresetExtractor(False, torch.device("cpu"), sampling_ratio=0.02, k=None)

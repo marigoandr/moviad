@@ -44,6 +44,10 @@ class CoresetExtractor:
 
         self.device = device
 
+    def coreset_size(self, num_vectors: int) -> int:
+        """Number of coreset points for num_vectors vectors: k, or sampling_ratio of them when k is None."""
+        return self.k if self.k is not None else max(1, round(self.sampling_ratio * num_vectors))
+
     def reset_distances(self):
         self.min_distances = None
 
@@ -85,22 +89,18 @@ class CoresetExtractor:
     def get_coreset_idx_randomp(
             self,
             z_lib,
-            n: int = 1000,
-            k: int = 30000,
             eps: float = 0.90,
             float16: bool = True,
     ):
-        """Returns n coreset idx for given z_lib.
+        """Returns the indices of a coreset of coreset_size(len(z_lib)) points of z_lib.
 
         Performance on AMD3700, 32GB RAM, RTX3080 (10GB):
         CPU: 40-60 it/s, GPU: 500+ it/s (float32), 1500+ it/s (float16)
 
         Args:
             z_lib:      (n, d) tensor of patches.
-            n:          Number of patches to select.
             eps:        Agression of the sparse random projection.
             float16:    Cast all to float16, saves memory and is a bit faster (on GPU).
-            force_cpu:  Force cpu, useful in case of GPU OOM.
 
         Returns:
             coreset indices
@@ -141,8 +141,8 @@ class CoresetExtractor:
         coreset_idx = [torch.tensor(select_idx)]
         min_distances = torch.linalg.norm(z_lib - last_item, dim=1, keepdims=True)
 
-        k = self.k if self.k is not None else max(1, round(self.sampling_ratio * num_vectors))
-        for _ in tqdm(range(k - 1)):  # k points in total: the first one, then k - 1 greedy picks
+        # coreset_size points in total: the first one, then coreset_size - 1 greedy picks
+        for _ in tqdm(range(self.coreset_size(num_vectors) - 1)):
             distances = torch.linalg.norm(z_lib - last_item, dim=1, keepdims=True)  # broadcasting step
             # distances = torch.sum(torch.pow(z_lib-last_item, 2), dim=1, keepdims=True) # broadcasting step
             min_distances = torch.minimum(distances, min_distances)  # iterative step
