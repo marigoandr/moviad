@@ -22,35 +22,50 @@ ANOMALOUS_GRADES = (4, 5)  # grades 1-3 are normal
 class RaspGradeCropDataset(VADDataset):
     """The crops of one split of a crops folder.
 
-    As the other datasets of moviad, the train split returns the image only and the test split returns
-    (image, label, mask, path), with mask (1, H, W) all zero: there is no pixel-level ground truth.
+    Args:
+        dataset_arguments: the arguments of the dataset, dataset_path the folder of the crops folders.
+        category: the crops folder, relative to dataset_path (e.g. "yolo_sam3/deblurred/refined").
+        split: "train" or "test".
+        foreground: return the raspberry mask too, on both splits (see __getitem__); e.g. to score the
+            crops only inside the raspberry, with model(image, foreground=foreground).
 
     Attributes:
-        samples: the rows of index.csv of the split, numbered from 0, in dataset order.
+        samples: the rows of index.csv of the split, numbered from 0, in dataset order, plus a "label"
+            column, 1 for the anomalous grades and 0 otherwise (the train crops included).
     """
 
     def __init__(self, dataset_arguments: DatasetArguments, category: str, split: Split | str,
                  foreground: bool = False) -> None:
-        """foreground: both splits return (image, label, mask, path, foreground), foreground the (1, H, W)
-        bool raspberry mask, and label NORMAL for the train crops; e.g. to score the crops only inside the
-        raspberry, with model(image, foreground=foreground). H, W = gt_mask_size."""
         super().__init__(dataset_arguments, category, split)
         self.root_category = Path(dataset_arguments.dataset_path) / category
-        index = pd.read_csv(self.root_category / "index.csv")
-        self.samples = index[index.split == self.split.value].reset_index(drop=True)
+        index_csv = pd.read_csv(self.root_category / "index.csv")
+        self.samples = index_csv[index_csv.split == self.split.value].reset_index(drop=True)
+        # The train crops have no grade (NaN): normal
+        self.samples["label"] = self.samples.grade.isin(ANOMALOUS_GRADES).astype(int)
         self.foreground = foreground
 
     def __len__(self) -> int:
         return len(self.samples)
 
     def __getitem__(self, index: int):
+        """
+        Args:
+            index (int) : index of the crop to be returned
+
+        Returns:
+            The image (Tensor (3, H, W)) only for the train split, and
+            (image, label, mask, path) for the test split: label (LabelName), mask (Tensor (1, H', W'), all
+            zero: there is no pixel-level ground truth), path (str) of the crop.
+            With foreground, both splits return (image, label, mask, path, foreground), foreground the
+            (1, H', W') bool raspberry mask and label NORMAL for the train crops.
+            H, W = img_size; H', W' = gt_mask_size.
+        """
         row = self.samples.iloc[index]
         path = self.root_category / f"{row.file}.png"
         image = self.transform_image(Image.open(path).convert("RGB"))
         if self.split == Split.TRAIN and not self.foreground:
             return image
-        # The train crops have no grade (NaN): normal
-        label = LabelName.ABNORMAL if row.grade in ANOMALOUS_GRADES else LabelName.NORMAL
+        label = LabelName(row.label)
         mask = torch.zeros(1, *self.dataset_arguments.gt_mask_size, dtype=torch.int)
         if not self.foreground:
             return image, label, mask, str(path)

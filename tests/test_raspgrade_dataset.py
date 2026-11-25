@@ -28,7 +28,10 @@ def test_without_foreground_the_splits_follow_the_moviad_convention(tmp_path):
     args = _crops_folder(tmp_path)
     train = RaspGradeCropDataset(args, "yolo/deblurred/refined", "train")
     assert len(train) == 1 and train[0].shape == (3, 8, 8)  # the image only
-    image, label, mask, path = RaspGradeCropDataset(args, "yolo/deblurred/refined", "test")[0]
+    assert train.samples.label.tolist() == [0]  # no grade: normal
+    test = RaspGradeCropDataset(args, "yolo/deblurred/refined", "test")
+    assert test.samples.label.tolist() == [1]  # grade 5
+    image, label, mask, path = test[0]
     assert image.shape == (3, 8, 8) and label == LabelName.ABNORMAL  # grade 5
     assert not mask.any() and mask.shape == (1, 8, 8)  # no pixel-level ground truth
     assert path.endswith("b_obj3_yolo.png")
