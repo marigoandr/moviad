@@ -41,9 +41,11 @@ class Evaluator:
 
         gt_mask, gt_label, pred_anom_map, pred_anom_score = [], [], [], []
 
-        for image, label, mask, path in tqdm(dataloader, desc="Eval"):
+        for image, label, mask, path, *foreground in tqdm(dataloader, desc="Eval"):
+            # A fifth element is the foreground mask of each image: the model scores only inside it
+            kwargs = {"foreground": foreground[0].to(device)} if foreground else {}
             with torch.no_grad():
-                anom_maps, anom_scores = model(image.to(device))
+                anom_maps, anom_scores = model(image.to(device), **kwargs)
             gt_mask.append(mask.cpu().numpy().astype(int))
             gt_label.append(label.cpu().numpy())
             pred_anom_map.append(anom_maps.cpu().numpy())
