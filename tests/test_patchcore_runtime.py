@@ -152,3 +152,15 @@ def test_foreground_restricts_the_scores_and_the_maps():
     assert torch.equal(full_maps, maps) and torch.equal(full_scores, scores)
     empty_maps, empty_scores = model(images, foreground=torch.zeros(2, 1, 32, 32, dtype=torch.bool))
     assert not empty_maps.any() and not empty_scores.any()
+
+
+def test_fit_with_a_quantized_feature_extractor_is_not_implemented():
+    from torch.utils.data import DataLoader
+    from moviad.models.training_args import TrainingArgs
+
+    model = _patchcore()
+    model.extract_embedding = lambda batch: (torch.quantize_per_tensor(torch.rand(64 * len(batch), 16), 0.1, 0,
+                                                                       torch.quint8), len(batch), 8, 8)
+    model.train()
+    with pytest.raises(NotImplementedError):
+        model.train_epoch(0, DataLoader(torch.rand(4, 3, 32, 32), batch_size=2), TrainingArgs(batch_size=2, epochs=1))

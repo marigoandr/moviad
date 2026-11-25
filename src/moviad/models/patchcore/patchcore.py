@@ -211,8 +211,9 @@ class PatchCore(VADModel):
             for batch in tqdm(iter(train_dataloader)):
                 embedding = self(batch.to(self.device))
                 if embeddings is None:  # patches per image and embedding size are known from the first batch
-                    # shortcut: float embeddings only (torch.empty has no quantized dtypes), the same as the
-                    # coreset extractor; a quantized feature extractor needs its own path here
+                    if embedding.is_quantized:
+                        # TODO: quantized embeddings cannot be written into a preallocated tensor
+                        raise NotImplementedError("PatchCore fit with a quantized feature extractor")
                     patches_per_image = len(embedding) // len(batch)
                     embeddings = torch.empty(len(train_dataloader.dataset) * patches_per_image, embedding.shape[1],
                                              dtype=embedding.dtype)
@@ -260,10 +261,6 @@ class PatchCore(VADModel):
                 coreset = self.product_quantizer.encode(coreset)
 
             self.memory_bank = coreset
-
-            del embeddings
-            del total_embbeddings
-            torch.cuda.empty_cache()
 
     def generate_embedding(self, features: dict[str, Tensor]) -> Tensor:
         """Generate embedding from hierarchical feature map.
