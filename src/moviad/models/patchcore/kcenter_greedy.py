@@ -145,7 +145,7 @@ class CoresetExtractor:
         last_item = z_lib[select_idx:select_idx + 1]
         coreset_idx = [torch.tensor(select_idx)]
 
-        for _ in tqdm(range(self.k)):
+        for _ in tqdm(range(self.k - 1)):  # k points in total: the first one, then k - 1 greedy picks
             distances = torch.linalg.norm(z_lib - last_item, dim=1, keepdims=True)  # broadcasting step
             # distances = torch.sum(torch.pow(z_lib-last_item, 2), dim=1, keepdims=True) # broadcasting step
             min_distances = torch.minimum(distances, min_distances)  # iterative step

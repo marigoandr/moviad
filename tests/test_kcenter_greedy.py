@@ -34,6 +34,7 @@ def test_projected_coreset_matches_fit_transform():
     projected = SparseRandomProjection(eps=0.9).fit_transform(x.numpy()).astype(np.float64)
     assert projected.shape[1] < x.shape[1]  # the projection does run
     chosen = _coreset(x, 30)
+    assert len(chosen) == 30  # exactly k points, the first one included
     _assert_greedy(projected, chosen)
     # Not greedy on the unprojected vectors: the coreset does come from the projection
     try:

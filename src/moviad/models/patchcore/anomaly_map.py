@@ -47,8 +47,9 @@ class AnomalyMapGenerator(nn.Module):
             anomaly_map = patch_scores
         else:
             anomaly_map = F.interpolate(patch_scores, size=(image_size[0], image_size[1]), mode="bilinear", align_corners=False)
-        anomaly_map = self.blur(anomaly_map)
-        return AnomalyMapGenerator.rescale(anomaly_map)
+        # Not rescaled: a min-max over the batch would make each map depend on the other images of the batch;
+        # the Evaluator normalizes the maps of the whole test set before the pixel-level metrics
+        return self.blur(anomaly_map)
 
     def forward(
         self,
@@ -71,6 +72,3 @@ class AnomalyMapGenerator(nn.Module):
             Tensor: anomaly_map
         """
         return self.compute_anomaly_map(patch_scores, image_size)
-
-    def rescale(x):
-        return (x - x.min()) / (x.max() - x.min())

@@ -95,13 +95,13 @@ def _fit_and_predict(device: torch.device, drop_last: bool = False):
 def test_fit_and_predict_on_cpu():
     model, maps, scores = _fit_and_predict("cpu")
     assert model.memory_bank.dtype == torch.float32
-    assert model.memory_bank.shape == (11, 16)  # k-center greedy: the first patch, then memory_bank_size picks
+    assert model.memory_bank.shape == (10, 16)  # memory_bank_size patches
     assert maps.shape == (7, 1, 32, 32) and scores.shape == (7,)
 
 
 def test_fit_with_a_loader_that_drops_the_last_batch():
     model, _, _ = _fit_and_predict("cpu", drop_last=True)
-    assert model.memory_bank.shape == (11, 16)
+    assert model.memory_bank.shape == (10, 16)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
@@ -121,4 +121,12 @@ def test_train_chunk_twice_merges_with_the_memory_bank():
     for seed in (0, 1):
         torch.manual_seed(seed)
         model.train_chunk(DataLoader(torch.rand(4, 3, 32, 32), batch_size=2), TrainingArgs(batch_size=2, epochs=1))
-    assert model.memory_bank.shape == (11, 16)
+    assert model.memory_bank.shape == (10, 16)
+
+
+def test_anomaly_map_does_not_depend_on_the_rest_of_the_batch():
+    model, _, _ = _fit_and_predict("cpu")
+    images = torch.rand(4, 3, 32, 32)
+    in_batch, _ = model(images)
+    alone, _ = model(images[:1])
+    assert torch.allclose(alone, in_batch[:1], atol=1e-5)
