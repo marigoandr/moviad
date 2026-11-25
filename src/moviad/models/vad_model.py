@@ -33,12 +33,10 @@ class VADModel(nn.Module):
         self.eval()
         maps, scores = [], []
         for batch in tqdm(dataloader, desc="Predict"):
-            if isinstance(batch, torch.Tensor):
-                images, kwargs = batch, {}
-            else:
-                images = batch[0]
-                kwargs = {"foreground": batch[4].to(device)} if len(batch) > 4 else {}
-            batch_maps, batch_scores = self(images.to(device), **kwargs)
+            if isinstance(batch, torch.Tensor):  # a train split: the images alone
+                batch = (batch,)
+            kwargs = {"foreground": batch[4].to(device)} if len(batch) > 4 else {}
+            batch_maps, batch_scores = self(batch[0].to(device), **kwargs)
             maps.append(batch_maps.cpu())
             scores.append(batch_scores.cpu())
         return torch.cat(maps), torch.cat(scores)
