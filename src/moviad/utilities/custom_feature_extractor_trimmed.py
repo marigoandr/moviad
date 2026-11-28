@@ -40,6 +40,12 @@ TORCH_BACKBONES = (
     "mobilenet_v2",
 )
 
+# DINOv3 ViTs pretrained on LVD-1689M, from the Hugging Face hub: their weights require Meta's DINOv3 license
+DINOV3_BACKBONES = {
+    "dinov3_vits16": "facebook/dinov3-vits16-pretrain-lvd1689m",
+    "dinov3_vitb16": "facebook/dinov3-vitb16-pretrain-lvd1689m",
+}
+
 
 class CustomFeatureExtractor:
 
@@ -57,7 +63,7 @@ class CustomFeatureExtractor:
 
         Args:
             model_name (str): name of the backbone to use
-            layers_idx (list): list of layers identifiers
+            layers_idx (list): list of layers identifiers (block indices, from 0, for DINOv3)
             device (torch.device): device to be used
         """
 
@@ -68,7 +74,7 @@ class CustomFeatureExtractor:
         self.project_path = Path(__file__).parent.parent
 
         # ¢heck for backbone support
-        if model_name not in OTHERS_BACKBONES + TORCH_BACKBONES:
+        if model_name not in OTHERS_BACKBONES + TORCH_BACKBONES + tuple(DINOV3_BACKBONES):
             raise NotImplementedError(
                 f"The backbone: {model_name} is not supported for feature extraction"
             )
@@ -78,6 +84,13 @@ class CustomFeatureExtractor:
             self.model = CustomFeatureExtractor.get_feature_extractor(
                 model_name, layers_idx, frozen
             )
+
+        elif model_name in DINOV3_BACKBONES:
+            from transformers import DINOv3ViTModel
+            # float32 explicitly: from_pretrained would otherwise keep the dtype of the checkpoint
+            self.model = DINOv3ViTModel.from_pretrained(DINOV3_BACKBONES[model_name], dtype=torch.float32)
+            # The blocks after the last one of layers_idx are never used
+            self.model.model.layer = self.model.model.layer[: max(map(int, layers_idx)) + 1]
 
         else:
             # check for mcunet backbone
@@ -326,6 +339,14 @@ class CustomFeatureExtractor:
 
         if self.model_name in TORCH_BACKBONES:
             return list(self.model(batch).values())
+
+        elif self.model_name in DINOV3_BACKBONES:
+            # hidden_states[i + 1] is the output of block i, before the final LayerNorm, applied here to each
+            states = self.model(batch, output_hidden_states=True).hidden_states
+            h, w = (side // self.model.config.patch_size for side in batch.shape[-2:])
+            skip = 1 + self.model.config.num_register_tokens  # the CLS and register tokens come first
+            return [self.model.norm(states[int(i) + 1][:, skip:]).transpose(1, 2).reshape(len(batch), -1, h, w)
+                    for i in self.layers_idx]
 
         else:
 

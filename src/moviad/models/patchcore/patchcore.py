@@ -33,7 +33,7 @@ class PatchCore(VADModel):
         num_neighbors: int = 9,
         apply_quantization: bool = False,
         memory_bank_size: int = 10000,
-        foreground_dilation: int = 2,
+        foreground_dilation: int = 16,
     ) -> None:
 
         """
@@ -45,7 +45,7 @@ class PatchCore(VADModel):
             feature_extractor (CustomFeatureExtractor): feature extractor to be used
             num_neighbors (int): number of neighbors to be considered in the k-nn search
             memory_bank_size (int): patches kept in the memory bank by the default coreset extractor
-            foreground_dilation (int): radius, in patches, of the dilation of the foreground masks that
+            foreground_dilation (int): radius, in pixels of the masks, of the dilation of the foreground masks that
                 forward() may get (see restrict_to_mask())
         """
 
@@ -128,7 +128,7 @@ class PatchCore(VADModel):
         Args:
             input_tensor (Tensor): Input tensor
             foreground (Tensor | None): (B, 1, H, W) bool masks of the object; in test mode, if given, the
-                patch scores outside them, dilated by foreground_dilation patches, are zeroed before the
+                patch scores outside them, dilated by foreground_dilation pixels, are zeroed before the
                 anomaly score and map are computed. Ignored in training mode.
 
         Returns:
